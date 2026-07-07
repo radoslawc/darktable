@@ -1687,6 +1687,7 @@ void init_presets(dt_lib_module_t *self)
   AM("dither");
   AM("hazeremoval");
   AM("hotpixels");
+  AM("dust_auto");
   AM("lens");
   AM("liquify");
   AM("nlmeans");
@@ -1789,6 +1790,7 @@ void init_presets(dt_lib_module_t *self)
   AM("denoiseprofile");
   AM("hazeremoval");
   AM("hotpixels");
+  AM("dust_auto");
   AM("lens");
   AM("retouch");
   AM("liquify");
@@ -1846,6 +1848,7 @@ void init_presets(dt_lib_module_t *self)
   AM("denoiseprofile");
   AM("hazeremoval");
   AM("hotpixels");
+  AM("dust_auto");
   AM("lens");
   AM("retouch");
   AM("liquify");

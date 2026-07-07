@@ -117,6 +117,7 @@ const dt_iop_order_entry_t legacy_order[] = {
   { {27.5f }, "diffuse", 0},
   { {27.5f }, "censorize", 0},
   { {27.5f }, "negadoctor", 0},
+  { {27.55f }, "dust_auto", 0},
   { {27.5f }, "blurs", 0},
   { {27.5f }, "basicadj", 0},
   { {27.5f }, "primaries", 0},
@@ -225,6 +226,7 @@ const dt_iop_order_entry_t v30_order[] = {
   { {28.5f }, "negadoctor", 0},      // Cineon film encoding comes
                                      // after scanner input color
                                      // profile
+  { {28.55f }, "dust_auto", 0},
   { {28.5f }, "blurs", 0},           // physically-accurate blurs (motion and lens)
   { {28.5f }, "primaries", 0},
   { {29.0f }, "nlmeans", 0},         // signal processing (denoising)
@@ -346,6 +348,7 @@ const dt_iop_order_entry_t v50_order[] = {
   { {28.5f }, "negadoctor", 0},      // Cineon film encoding comes
                                      // after scanner input color
                                      // profile
+  { {28.55f }, "dust_auto", 0},
   { {28.5f }, "blurs", 0},           // physically-accurate blurs (motion and lens)
   { {28.5f }, "primaries", 0},
   { {29.0f }, "nlmeans", 0},         // signal processing (denoising)
@@ -466,6 +469,7 @@ const dt_iop_order_entry_t v30_jpg_order[] = {
   { { 28.5f }, "diffuse", 0 },
   { { 28.5f }, "censorize", 0 },
   { { 28.5f }, "negadoctor", 0 },   // Cineon film encoding comes after scanner input color profile
+  { { 28.55f }, "dust_auto", 0 },
   { { 28.5f }, "blurs", 0 },        // physically-accurate blurs (motion and lens)
   { { 28.5f }, "primaries", 0},
   { { 29.0f }, "nlmeans", 0 },      // signal processing (denoising)
@@ -590,6 +594,7 @@ const dt_iop_order_entry_t v50_jpg_order[] = {
   { { 28.5f }, "diffuse", 0 },
   { { 28.5f }, "censorize", 0 },
   { { 28.5f }, "negadoctor", 0 },   // Cineon film encoding comes after scanner input color profile
+  { { 28.55f }, "dust_auto", 0 },
   { { 28.5f }, "blurs", 0 },        // physically-accurate blurs (motion and lens)
   { { 28.5f }, "primaries", 0},
   { { 29.0f }, "nlmeans", 0 },      // signal processing (denoising)
@@ -750,6 +755,7 @@ void dt_ioppr_migrate_legacy_iop_order_list(GList *iop_order_list)
   _insert_before(iop_order_list, "colorbalancergb", "colorequal");
   _insert_before(iop_order_list, "highlights", "rasterfile");
   _insert_before(iop_order_list, "colorbalance", "colorharmonizer");
+  _insert_before(iop_order_list, "nlmeans", "dust_auto");
 }
 
 static dt_iop_order_t _ioppr_get_default_iop_order_version(const dt_imgid_t imgid)
