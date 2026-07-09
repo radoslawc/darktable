@@ -116,6 +116,7 @@ const dt_iop_order_entry_t legacy_order[] = {
   { {27.5f }, "diffuse", 0},
   { {27.5f }, "censorize", 0},
   { {27.5f }, "negadoctor", 0},
+  { {27.6f }, "dustscratches", 0},
   { {27.5f }, "blurs", 0},
   { {27.5f }, "basicadj", 0},
   { {27.5f }, "primaries", 0},
@@ -222,6 +223,7 @@ const dt_iop_order_entry_t v30_order[] = {
   { {28.5f }, "negadoctor", 0},      // Cineon film encoding comes
                                      // after scanner input color
                                      // profile
+  { {28.6f }, "dustscratches", 0},
   { {28.5f }, "blurs", 0},           // physically-accurate blurs (motion and lens)
   { {28.5f }, "primaries", 0},
   { {29.0f }, "nlmeans", 0},         // signal processing (denoising)
@@ -341,6 +343,7 @@ const dt_iop_order_entry_t v50_order[] = {
   { {28.5f }, "negadoctor", 0},      // Cineon film encoding comes
                                      // after scanner input color
                                      // profile
+  { {28.6f }, "dustscratches", 0},
   { {28.5f }, "blurs", 0},           // physically-accurate blurs (motion and lens)
   { {28.5f }, "primaries", 0},
   { {29.0f }, "nlmeans", 0},         // signal processing (denoising)
@@ -459,6 +462,7 @@ const dt_iop_order_entry_t v30_jpg_order[] = {
   { { 28.5f }, "diffuse", 0 },
   { { 28.5f }, "censorize", 0 },
   { { 28.5f }, "negadoctor", 0 },   // Cineon film encoding comes after scanner input color profile
+  { { 28.6f }, "dustscratches", 0 },
   { { 28.5f }, "blurs", 0 },        // physically-accurate blurs (motion and lens)
   { { 28.5f }, "primaries", 0},
   { { 29.0f }, "nlmeans", 0 },      // signal processing (denoising)
@@ -581,6 +585,7 @@ const dt_iop_order_entry_t v50_jpg_order[] = {
   { { 28.5f }, "diffuse", 0 },
   { { 28.5f }, "censorize", 0 },
   { { 28.5f }, "negadoctor", 0 },   // Cineon film encoding comes after scanner input color profile
+  { { 28.6f }, "dustscratches", 0 },
   { { 28.5f }, "blurs", 0 },        // physically-accurate blurs (motion and lens)
   { { 28.5f }, "primaries", 0},
   { { 29.0f }, "nlmeans", 0 },      // signal processing (denoising)
@@ -726,6 +731,7 @@ void dt_ioppr_migrate_legacy_iop_order_list(GList *iop_order_list)
   _insert_before(iop_order_list, "negadoctor", "channelmixerrgb");
   _insert_before(iop_order_list, "negadoctor", "censorize");
   _insert_before(iop_order_list, "negadoctor", "primaries");
+  _insert_before(iop_order_list, "blurs", "dustscratches");
   _insert_before(iop_order_list, "rgbcurve", "colorbalancergb");
   _insert_before(iop_order_list, "ashift", "cacorrectrgb");
   _insert_before(iop_order_list, "graduatednd", "crop");
