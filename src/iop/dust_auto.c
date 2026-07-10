@@ -36,6 +36,9 @@
 
 #define DUST_AUTO_MAX_RADIUS 16
 #define DUST_AUTO_HASH_SCALE 0.1031f
+#define DUST_AUTO_HIT 1
+#define DUST_AUTO_FIBER_CANDIDATE 3
+#define DUST_AUTO_FIBER_VISITED 4
 
 DT_MODULE_INTROSPECTION(2, dt_iop_dust_auto_params_t)
 
@@ -146,6 +149,15 @@ static inline float _romm_encode(const float x)
 static inline int _clampi(const int v, const int low, const int high)
 {
   return MIN(MAX(v, low), high);
+}
+
+static inline float _gray_at(const float *const restrict gray,
+                             const int width,
+                             const int height,
+                             const int x,
+                             const int y)
+{
+  return gray[(size_t)_clampi(y, 0, height - 1) * width + _clampi(x, 0, width - 1)];
 }
 
 static inline float _fractf(const float x)
@@ -274,7 +286,7 @@ static int _detect_dust(const float *const restrict gray,
 
         if(is_max || is_strong)
         {
-          hit_mask[pos] = 1;
+          hit_mask[pos] = DUST_AUTO_HIT;
           hits++;
         }
       }
@@ -284,6 +296,213 @@ static int _detect_dust(const float *const restrict gray,
   return hits;
 }
 
+static int _detect_fiber_candidates(const float *const restrict gray,
+                                    const float *const restrict local_std,
+                                    const float *const restrict wide_std,
+                                    uint8_t *const restrict hit_mask,
+                                    float *const restrict fiber_score,
+                                    const int width,
+                                    const int height,
+                                    const float threshold,
+                                    const float scale)
+{
+  const int normal_probe = _clampi((int)ceilf(scale), 1, 4);
+  const int along_probe = _clampi((int)ceilf(2.0f * scale), 2, 8);
+  const int margin = MAX(normal_probe, along_probe);
+  const int tx[4] = { 1, 0, 1, 1 };
+  const int ty[4] = { 0, 1, 1, -1 };
+  const int nx[4] = { 0, 1, 1, 1 };
+  const int ny[4] = { 1, 0, -1, 1 };
+  int candidates = 0;
+
+  DT_OMP_FOR(reduction(+:candidates))
+  for(int y = 0; y < height; y++)
+  {
+    for(int x = 0; x < width; x++)
+    {
+      const size_t pos = (size_t)y * width + x;
+      fiber_score[pos] = 0.0f;
+
+      if(hit_mask[pos] == DUST_AUTO_HIT
+         || x < margin || y < margin || x >= width - margin || y >= height - margin)
+        continue;
+
+      const float l_curr = gray[pos];
+      const float local_s = MAX(0.005f, local_std[pos]);
+      const float w_s = MAX(0.0f, wide_std[pos] - 0.02f);
+      const float texture_penalty = w_s * w_s * w_s * 180.0f;
+      const float ridge_thresh = MAX(0.010f, threshold * 0.030f + local_s * 0.40f + texture_penalty);
+      const float side_thresh = MAX(0.004f, ridge_thresh * 0.33f);
+      const float support_thresh = MAX(0.006f, ridge_thresh * 0.40f);
+      float best_score = 0.0f;
+
+      if(l_curr <= 0.05f) continue;
+
+      for(int d = 0; d < 4; d++)
+      {
+        const int sx1 = x + nx[d] * normal_probe;
+        const int sy1 = y + ny[d] * normal_probe;
+        const int sx2 = x - nx[d] * normal_probe;
+        const int sy2 = y - ny[d] * normal_probe;
+        const float side1 = _gray_at(gray, width, height, sx1, sy1);
+        const float side2 = _gray_at(gray, width, height, sx2, sy2);
+        const float side_mean = 0.5f * (side1 + side2);
+        const float contrast = l_curr - side_mean;
+        const float weaker_side = MIN(l_curr - side1, l_curr - side2);
+
+        if(contrast <= ridge_thresh || weaker_side <= side_thresh) continue;
+
+        const float along1 = _gray_at(gray, width, height,
+                                      x + tx[d] * along_probe,
+                                      y + ty[d] * along_probe);
+        const float along2 = _gray_at(gray, width, height,
+                                      x - tx[d] * along_probe,
+                                      y - ty[d] * along_probe);
+        const float along_support = 0.5f * (along1 + along2) - side_mean;
+
+        if(along_support > support_thresh)
+          best_score = MAX(best_score, contrast);
+      }
+
+      if(best_score > 0.0f)
+      {
+        hit_mask[pos] = DUST_AUTO_FIBER_CANDIDATE;
+        fiber_score[pos] = best_score;
+        candidates++;
+      }
+    }
+  }
+
+  return candidates;
+}
+
+static int _filter_fiber_components(uint8_t *const restrict hit_mask,
+                                    const float *const restrict fiber_score,
+                                    int *const restrict stack,
+                                    const int width,
+                                    const int height,
+                                    const float threshold,
+                                    const float auto_size,
+                                    const float scale)
+{
+  const int min_span = MAX(8, (int)ceilf(auto_size * scale * 2.0f));
+  const int min_pixels = MAX(5, (int)ceilf(auto_size * scale * 1.25f));
+  const int max_width = MAX(3, (int)ceilf(auto_size * scale * 1.25f));
+  const float score_floor = MAX(0.010f, threshold * 0.018f);
+  int accepted = 0;
+
+  for(int y = 0; y < height; y++)
+  {
+    for(int x = 0; x < width; x++)
+    {
+      const int start = y * width + x;
+      if(hit_mask[start] != DUST_AUTO_FIBER_CANDIDATE) continue;
+
+      int stack_count = 0;
+      int count = 0;
+      int min_x = x, max_x = x, min_y = y, max_y = y;
+      float score_sum = 0.0f;
+
+      stack[stack_count++] = start;
+      hit_mask[start] = DUST_AUTO_FIBER_VISITED;
+
+      while(stack_count > 0)
+      {
+        const int pos = stack[--stack_count];
+        const int py = pos / width;
+        const int px = pos - py * width;
+
+        count++;
+        score_sum += fiber_score[pos];
+        min_x = MIN(min_x, px);
+        max_x = MAX(max_x, px);
+        min_y = MIN(min_y, py);
+        max_y = MAX(max_y, py);
+
+        for(int dy = -1; dy <= 1; dy++)
+        {
+          const int ny = py + dy;
+          if(ny < 0 || ny >= height) continue;
+
+          for(int dx = -1; dx <= 1; dx++)
+          {
+            const int nx = px + dx;
+            if((dx == 0 && dy == 0) || nx < 0 || nx >= width) continue;
+
+            const int next = ny * width + nx;
+            if(hit_mask[next] == DUST_AUTO_FIBER_CANDIDATE)
+            {
+              hit_mask[next] = DUST_AUTO_FIBER_VISITED;
+              stack[stack_count++] = next;
+            }
+          }
+        }
+      }
+
+      const int span_x = max_x - min_x + 1;
+      const int span_y = max_y - min_y + 1;
+      const int small_span = MAX(1, MIN(span_x, span_y));
+      const int large_span = MAX(span_x, span_y);
+      const float bbox_area = (float)(span_x * span_y);
+      const float density = (bbox_area > 0.0f) ? (float)count / bbox_area : 1.0f;
+      const float avg_score = (count > 0) ? score_sum / (float)count : 0.0f;
+      const gboolean straight_thin = small_span <= max_width
+                                     && count <= large_span * max_width * 2;
+      const gboolean curved_sparse = density < 0.35f
+                                     && count <= large_span * max_width * 2;
+      const gboolean continuous = count >= (int)ceilf((float)large_span * 0.35f);
+      const gboolean keep = count >= min_pixels
+                            && large_span >= min_span
+                            && avg_score >= score_floor
+                            && continuous
+                            && (straight_thin || curved_sparse);
+
+      for(int cy = min_y; cy <= max_y; cy++)
+      {
+        for(int cx = min_x; cx <= max_x; cx++)
+        {
+          const int pos = cy * width + cx;
+          if(hit_mask[pos] == DUST_AUTO_FIBER_VISITED)
+          {
+            if(keep)
+            {
+              hit_mask[pos] = DUST_AUTO_HIT;
+              accepted++;
+            }
+            else
+              hit_mask[pos] = 0;
+          }
+        }
+      }
+    }
+  }
+
+  return accepted;
+}
+
+static int _detect_fibers(const float *const restrict gray,
+                          const float *const restrict local_std,
+                          const float *const restrict wide_std,
+                          uint8_t *const restrict hit_mask,
+                          float *const restrict fiber_score,
+                          int *const restrict stack,
+                          const int width,
+                          const int height,
+                          const float threshold,
+                          const float auto_size,
+                          const float scale)
+{
+  if(!stack) return 0;
+
+  const int candidates = _detect_fiber_candidates(gray, local_std, wide_std,
+                                                  hit_mask, fiber_score,
+                                                  width, height, threshold, scale);
+  if(candidates <= 0) return 0;
+
+  return _filter_fiber_components(hit_mask, fiber_score, stack,
+                                  width, height, threshold, auto_size, scale);
+}
+
 static int _detect_hits(const float *const restrict in,
                         float *const restrict gray,
                         float *const restrict gray2,
@@ -291,6 +510,7 @@ static int _detect_hits(const float *const restrict in,
                         float *const restrict local_std,
                         float *const restrict wide_std,
                         uint8_t *const restrict hit_mask,
+                        int *const restrict stack,
                         const int width,
                         const int height,
                         const float threshold,
@@ -300,7 +520,12 @@ static int _detect_hits(const float *const restrict in,
   memset(hit_mask, 0, sizeof(uint8_t) * (size_t)width * height);
   _build_detection_stats(in, gray, gray2, mean, local_std, wide_std,
                          width, height, auto_size, scale);
-  return _detect_dust(gray, mean, local_std, wide_std, hit_mask, width, height, threshold);
+  const int dust_hits = _detect_dust(gray, mean, local_std, wide_std,
+                                     hit_mask, width, height, threshold);
+  const int fiber_hits = _detect_fibers(gray, local_std, wide_std,
+                                        hit_mask, gray2, stack,
+                                        width, height, threshold, auto_size, scale);
+  return dust_hits + fiber_hits;
 }
 
 static int _auto_detect_hits(const float *const restrict in,
@@ -310,6 +535,7 @@ static int _auto_detect_hits(const float *const restrict in,
                              float *const restrict local_std,
                              float *const restrict wide_std,
                              uint8_t *const restrict hit_mask,
+                             int *const restrict stack,
                              const int width,
                              const int height,
                              const float scale,
@@ -332,7 +558,8 @@ static int _auto_detect_hits(const float *const restrict in,
     for(size_t t = 0; t < sizeof(thresholds) / sizeof(thresholds[0]); t++)
     {
       const int spots_count = _detect_hits(in, gray, gray2, mean, local_std, wide_std,
-                                           hit_mask, width, height, thresholds[t], sizes[s], scale);
+                                           hit_mask, stack,
+                                           width, height, thresholds[t], sizes[s], scale);
 
       if(spots_count > fallback_spots_count)
       {
@@ -361,7 +588,8 @@ static int _auto_detect_hits(const float *const restrict in,
   *selected_auto_size = best_auto_size;
 
   return _detect_hits(in, gray, gray2, mean, local_std, wide_std,
-                      hit_mask, width, height, best_threshold, best_auto_size, scale);
+                      hit_mask, stack,
+                      width, height, best_threshold, best_auto_size, scale);
 }
 
 static void _sort_luma_samples(float *const restrict luma,
@@ -416,7 +644,7 @@ static void _prepare_heal_mask(const uint8_t *const restrict hit_mask,
   {
     for(int hx = 0; hx < width; hx++)
     {
-      if(!hit_mask[(size_t)hy * width + hx]) continue;
+      if(hit_mask[(size_t)hy * width + hx] != DUST_AUTO_HIT) continue;
 
       const int min_y = _clampi(hy - exp_rad, 0, height - 1);
       const int max_y = _clampi(hy + exp_rad, 0, height - 1);
@@ -551,7 +779,7 @@ static void _heal_dust(const float *const restrict in,
         const int sx = _clampi((int)roundf((float)x + rx_dir * (float)p_rad), 0, width - 1);
         const int sy = _clampi((int)roundf((float)y + ry_dir * (float)p_rad), 0, height - 1);
 
-        if(!hit_mask[(size_t)sy * width + sx])
+        if(hit_mask[(size_t)sy * width + sx] != DUST_AUTO_HIT)
         {
           const float *const source = in + 4 * ((size_t)sy * width + sx);
           for(int c = 0; c < 3; c++)
@@ -599,6 +827,7 @@ void process(dt_iop_module_t *self,
   float *const restrict local_std = dt_alloc_align_float(npixels);
   float *const restrict wide_std = dt_alloc_align_float(npixels);
   uint8_t *const restrict hit_mask = calloc(npixels, sizeof(uint8_t));
+  int *const restrict stack = malloc(sizeof(*stack) * npixels);
   int hit_count = 0;
   float threshold = CLAMP(d->threshold, 0.0f, 1.0f);
   float auto_size = MAX(1.0f, d->auto_size);
@@ -609,10 +838,12 @@ void process(dt_iop_module_t *self,
 
     if(d->auto_parameters)
       hit_count = _auto_detect_hits(in, gray, gray2, mean, local_std, wide_std,
-                                    hit_mask, width, height, scale, &threshold, &auto_size);
+                                    hit_mask, stack,
+                                    width, height, scale, &threshold, &auto_size);
     else
       hit_count = _detect_hits(in, gray, gray2, mean, local_std, wide_std,
-                               hit_mask, width, height, threshold, auto_size, scale);
+                               hit_mask, stack,
+                               width, height, threshold, auto_size, scale);
 
     _heal_dust(in, out, hit_mask, hit_count, mean, local_std, wide_std, gray2,
                width, height, auto_size, scale, d->mark_removed);
@@ -632,6 +863,7 @@ void process(dt_iop_module_t *self,
   dt_free_align(local_std);
   dt_free_align(wide_std);
   free(hit_mask);
+  free(stack);
 }
 
 void commit_params(dt_iop_module_t *self,
