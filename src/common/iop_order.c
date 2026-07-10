@@ -151,6 +151,7 @@ const dt_iop_order_entry_t legacy_order[] = {
   { {49.0f }, "tonecurve", 0},
   { {50.0f }, "levels", 0},
   { {50.2f }, "rgblevels", 0},
+  { {50.3f }, "autoinputlevels", 0},
   { {50.5f }, "rgbcurve", 0},
   { {51.0f }, "relight", 0},
   { {52.0f }, "colorcorrection", 0},
@@ -255,6 +256,7 @@ const dt_iop_order_entry_t v30_order[] = {
   { {41.5f }, "colorbalancergb", 0},    // scene-referred color manipulation
   { {42.0f }, "rgbcurve", 0},        // really versatile way to edit colour in scene-referred and display-referred workflow
   { {43.0f }, "rgblevels", 0},       // same
+  { {43.2f }, "autoinputlevels", 0}, // GIMP-style automatic RGB input stretch
   { {44.0f }, "basecurve", 0},       // conversion from scene-referred to display referred, reverse-engineered
                                   //    on camera JPEG default look
   { {45.0f }, "filmic", 0},          // same, but different (parametric) approach
@@ -376,6 +378,7 @@ const dt_iop_order_entry_t v50_order[] = {
   { {41.5f }, "colorbalancergb", 0},    // scene-referred color manipulation
   { {42.0f }, "rgbcurve", 0},        // really versatile way to edit colour in scene-referred and display-referred workflow
   { {43.0f }, "rgblevels", 0},       // same
+  { {43.2f }, "autoinputlevels", 0}, // GIMP-style automatic RGB input stretch
   { {44.0f }, "basecurve", 0},       // conversion from scene-referred to display referred, reverse-engineered
                                   //    on camera JPEG default look
   { {45.0f }, "filmic", 0},          // same, but different (parametric) approach
@@ -498,6 +501,7 @@ const dt_iop_order_entry_t v30_jpg_order[] = {
   { { 42.0f }, "rgbcurve", 0 },      // really versatile way to edit colour in scene-referred and display-referred
                                      // workflow
   { { 43.0f }, "rgblevels", 0 },     // same
+  { { 43.2f }, "autoinputlevels", 0 }, // GIMP-style automatic RGB input stretch
   { { 44.0f }, "basecurve", 0 },     // conversion from scene-referred to display referred, reverse-engineered
                                      //    on camera JPEG default look
   { { 45.0f }, "filmic", 0 },        // same, but different (parametric) approach
@@ -622,6 +626,7 @@ const dt_iop_order_entry_t v50_jpg_order[] = {
   { { 42.0f }, "rgbcurve", 0 },      // really versatile way to edit colour in scene-referred and display-referred
                                      // workflow
   { { 43.0f }, "rgblevels", 0 },     // same
+  { { 43.2f }, "autoinputlevels", 0 }, // GIMP-style automatic RGB input stretch
   { { 44.0f }, "basecurve", 0 },     // conversion from scene-referred to display referred, reverse-engineered
                                      //    on camera JPEG default look
   { { 45.0f }, "filmic", 0 },        // same, but different (parametric) approach
@@ -682,28 +687,35 @@ static void *_dup_iop_order_entry(const void *src, gpointer data);
 
 static int _count_entries_operation(GList *e_list, const char *operation);
 
+static gboolean _iop_order_list_contains(GList *iop_order_list,
+                                         const char *module)
+{
+  for(const GList *l = iop_order_list; l; l = g_list_next(l))
+  {
+    const dt_iop_order_entry_t *const restrict entry = l->data;
+    if(!strcmp(entry->operation, module))
+      return TRUE;
+  }
+
+  return FALSE;
+}
+
+static dt_iop_order_entry_t *_new_iop_order_entry(const char *module)
+{
+  dt_iop_order_entry_t *new_entry = malloc(sizeof(dt_iop_order_entry_t));
+
+  g_strlcpy(new_entry->operation, module, sizeof(new_entry->operation));
+  new_entry->instance = 0;
+  new_entry->o.iop_order = 0;
+
+  return new_entry;
+}
 
 static GList *_insert_before(GList *iop_order_list,
                              const char *module,
                              const char *new_module)
 {
-  gboolean exists = FALSE;
-
-  // first check that new module is missing
-
-  for(const GList *l = iop_order_list; l; l = g_list_next(l))
-  {
-    const dt_iop_order_entry_t *const restrict entry = l->data;
-    if(!strcmp(entry->operation, new_module))
-    {
-      exists = TRUE;
-      break;
-    }
-  }
-
-  // the insert it if needed
-
-  if(!exists)
+  if(!_iop_order_list_contains(iop_order_list, new_module))
   {
     for(GList *l = iop_order_list; l; l = g_list_next(l))
     {
@@ -711,17 +723,43 @@ static GList *_insert_before(GList *iop_order_list,
 
       if(!strcmp(entry->operation, module))
       {
-        dt_iop_order_entry_t *new_entry = malloc(sizeof(dt_iop_order_entry_t));
-
-        g_strlcpy(new_entry->operation, new_module, sizeof(new_entry->operation));
-        new_entry->instance = 0;
-        new_entry->o.iop_order = 0;
-
-        iop_order_list = g_list_insert_before(iop_order_list, l, new_entry);
+        iop_order_list = g_list_insert_before(iop_order_list, l,
+                                              _new_iop_order_entry(new_module));
         break;
       }
     }
   }
+
+  return iop_order_list;
+}
+
+static GList *_insert_after(GList *iop_order_list,
+                            const char *module,
+                            const char *new_module)
+{
+  if(!_iop_order_list_contains(iop_order_list, new_module))
+  {
+    for(GList *l = iop_order_list; l; l = g_list_next(l))
+    {
+      const dt_iop_order_entry_t *const restrict entry = l->data;
+
+      if(!strcmp(entry->operation, module))
+      {
+        iop_order_list = g_list_insert_before(iop_order_list, g_list_next(l),
+                                              _new_iop_order_entry(new_module));
+        break;
+      }
+    }
+  }
+
+  return iop_order_list;
+}
+
+static GList *_append_if_missing(GList *iop_order_list,
+                                 const char *new_module)
+{
+  if(!_iop_order_list_contains(iop_order_list, new_module))
+    iop_order_list = g_list_append(iop_order_list, _new_iop_order_entry(new_module));
 
   return iop_order_list;
 }
@@ -750,6 +788,11 @@ void dt_ioppr_migrate_legacy_iop_order_list(GList *iop_order_list)
   _insert_before(iop_order_list, "colorbalancergb", "colorequal");
   _insert_before(iop_order_list, "highlights", "rasterfile");
   _insert_before(iop_order_list, "colorbalance", "colorharmonizer");
+  _insert_after(iop_order_list, "rgblevels", "autoinputlevels");
+  _insert_before(iop_order_list, "rgbcurve", "autoinputlevels");
+  _insert_before(iop_order_list, "basecurve", "autoinputlevels");
+  _insert_before(iop_order_list, "colorout", "autoinputlevels");
+  _append_if_missing(iop_order_list, "autoinputlevels");
 }
 
 static dt_iop_order_t _ioppr_get_default_iop_order_version(const dt_imgid_t imgid)

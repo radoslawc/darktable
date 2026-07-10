@@ -201,6 +201,11 @@
     background-image: url('../pixmaps/plugins/darkroom/levels.svg');
 }
 
+#iop-panel-icon-autoinputlevels
+{
+    background-image: url('../pixmaps/plugins/darkroom/levels.svg');
+}
+
 #iop-panel-icon-liquify
 {
     background-image: url('../pixmaps/plugins/darkroom/liquify.svg');
